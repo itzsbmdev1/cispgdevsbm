@@ -69,17 +69,20 @@ if (!domain && !runInLocalhostMode) {
   process.exit(1);
 }
 
-let runtimeUrls;
-try {
-  runtimeUrls = resolveRuntimeUrls({ envMode: runInLocalhostMode ? 'localhost' : 'production', domain, prefix });
-} catch (err) {
-  console.error('\n❌ [CONFIGURATION ERROR]:', err.message);
-  process.exit(1);
-}
+// Check for user-configured Cloudflare Tunnel command (Safe execution)
+let tunnelProcess = null;
+const tunnelCmd = process.env.CLOUDFLARE_TUNNEL_COMMAND || branding.cloudflareTunnelCommand;
 
-console.log(`[✓] Authoritative Runtime Mode: ${runInLocalhostMode ? 'LOCALHOST (explicit opt-in)' : 'PRODUCTION'}`);
-console.log(`[✓] ${runInLocalhostMode ? 'Public Host' : 'Cloudflare Domain'}: ${runtimeUrls.domain}`);
-console.log(`[✓] Deployment Prefix: ${runtimeUrls.prefix}\n`);
+if (tunnelCmd && tunnelCmd.trim()) {
+  console.log(`[☁️ Cloudflare Tunnel] Executing tunnel command before starting services:`);
+  try {
+    tunnelProcess = startCloudflaredSafely(tunnelCmd, { stdio: 'inherit' });
+    if (tunnelProcess) console.log(`[✓] Cloudflare Tunnel process launched (PID: ${tunnelProcess.pid}).\n`);
+  } catch (err) {
+    console.warn(`[⚠️ Warning] Could not launch cloudflared process: ${err.message}. Continuing with local process supervisor.`);
+  }
+  await new Promise(r => setTimeout(r, 1500));
+}
 
 // Check for user-configured Cloudflare Tunnel command
 let tunnelProcess = null;
