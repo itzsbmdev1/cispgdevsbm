@@ -117,37 +117,38 @@ export function runMigrations(targetDb) {
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_observations_fingerprint ON payment_observations (fingerprint_hash);"); } catch {}
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_observations_attributed_payment ON payment_observations (attributed_payment_id);"); } catch {}
 
-  // Seed default merchant if empty
+  // 🔥 Seed default permanent merchant with your exact custom credentials
   const merchantRepo = new MerchantRepository(db);
   const existing = merchantRepo.findAll();
 
   let defaultMerchant;
-  if (existing.length === 0) {
+  const targetMerchantId = '0ab5ab0a-f4ae-4585-b45c-1f3cf66a9ec2';
+  const targetWebhookSecret = 'a2f8a315b78f1ba5bd9260f19627559766579bafe76c182fffb3a5587d13f768';
+
+  const foundTarget = merchantRepo.findById(targetMerchantId);
+
+  if (!foundTarget && existing.length === 0) {
     defaultMerchant = merchantRepo.create({
-      id: '00000000-0000-0000-0000-000000000001',
-      businessName: 'YOUPI Demo Store',
-      slug: 'demo-store',
-      contactEmail: 'merchant@youpi.local',
-      contactPhone: '9876543210',
-      webhookUrl: process.env.COIN_STORE_WEBHOOK_URL || 'http://localhost:5000/api/webhook',
-      webhookSecret: getCoinStoreWebhookSecret(),
+      id: targetMerchantId,
+      businessName: 'Codova IT Solutions',
+      slug: 'codova-it-solutions',
+      contactEmail: 'admin@codovait.com',
+      contactPhone: '9999999999',
+      webhookUrl: 'https://matkabot.online/api/ApiController/youpi_webhook',
+      webhookSecret: targetWebhookSecret,
       branding: {
         appName: 'YOUPI PG',
-        primaryColor: '#2563eb',
+        primaryColor: '#0f766e',
         logoUrl: null
       }
     });
   } else {
-    defaultMerchant = existing[0];
-    if (!defaultMerchant.webhookSecret) {
+    defaultMerchant = foundTarget || existing[0];
+    if (defaultMerchant.webhookSecret !== targetWebhookSecret) {
       merchantRepo.update(defaultMerchant.id, {
-        webhookUrl: 'http://localhost:5000/api/webhook',
-        webhookSecret: getCoinStoreWebhookSecret()
+        webhookSecret: targetWebhookSecret,
+        webhookUrl: 'https://matkabot.online/api/ApiController/youpi_webhook'
       });
-    } else if (defaultMerchant.webhookSecret === LEGACY_DEFAULT_WEBHOOK_SECRET) {
-      // Older installs were seeded with a publicly known secret: rotate it.
-      merchantRepo.update(defaultMerchant.id, { webhookSecret: getCoinStoreWebhookSecret() });
-      console.warn('[migrate] Rotated the default merchant webhook secret away from the legacy public value. Update your merchant webhook verifier.');
     }
   }
 
@@ -164,10 +165,6 @@ export function runMigrations(targetDb) {
     });
   }
 
-  // Demo customer seeding is opt-in and never carries real personal data.
-  // Previously this unconditionally created a customer with a real name, phone number and
-  // email, and flagged the phone as verified — shipping someone's PII (and a pre-authorised
-  // OTP login identity) into every merchant deployment.
   if (process.env.YOUPI_SEED_DEMO_CUSTOMER === 'true') {
     const customerRepo = new CustomerRepository(db);
     const demoMobile = '9000000000';
