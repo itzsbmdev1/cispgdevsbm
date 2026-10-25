@@ -19,13 +19,6 @@ try {
   }
 } catch {}
 
-// Authoritative runtime mode enforcement (start.js takes absolute precedence).
-//
-// Production is the default and the ONLY mode that requires a Cloudflare domain: nothing
-// ever falls back to localhost implicitly. A containerised or LAN-only deployment can
-// opt out EXPLICITLY with YOUPI_ALLOW_LOCALHOST_MODE=true together with
-// YOUPI_MODE=localhost, so the operator has asked for it rather than it being a silent
-// fallback.
 const allowLocalhostMode = String(process.env.YOUPI_ALLOW_LOCALHOST_MODE || '').trim().toLowerCase() === 'true';
 const requestedMode = String(process.env.YOUPI_MODE || '').trim().toLowerCase();
 const runInLocalhostMode = allowLocalhostMode && requestedMode === 'localhost';
@@ -45,13 +38,13 @@ if (runInLocalhostMode) {
   console.log('====================================================');
 }
 
-// 1. Run database migrations & load persisted configuration (Part B3: never overwrite settings)
+// 1. Run database migrations & load persisted configuration
 console.log('[1/3] Loading persisted production database & settings...');
 const migrationResult = runMigrations();
 const merchant = migrationResult.defaultMerchant;
 const branding = merchant?.branding || {};
 
-// 2. Validate Production Configuration (Part B2 & Part I)
+// 2. Validate Production Configuration
 const domain = (branding.cloudflareDomain || branding.domainTld || process.env.CLOUDFLARE_DOMAIN || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
 const prefix = (branding.deploymentPrefix || branding.domainPrefix || process.env.DEPLOYMENT_PREFIX || 'pay').trim().toLowerCase().replace(/[^a-z0-9-_]/g, '') || 'pay';
 
@@ -62,14 +55,23 @@ if (!domain && !runInLocalhostMode) {
   console.error('Cloudflare Domain is required when running in PRODUCTION mode.');
   console.error('Please configure your Cloudflare Domain in the Merchant Admin panel,');
   console.error('or set CLOUDFLARE_DOMAIN in .env before running `npm start`.');
-  console.error('');
-  console.error('YOUPI PG V2 adheres to authoritative production mode and will NOT');
-  console.error('silently rewrite or fall back to localhost in production.');
   console.error('================================================================\n');
   process.exit(1);
 }
 
-// Check for user-configured Cloudflare Tunnel command (Safe execution)
+let runtimeUrls;
+try {
+  runtimeUrls = resolveRuntimeUrls({ envMode: runInLocalhostMode ? 'localhost' : 'production', domain, prefix });
+} catch (err) {
+  console.error('\n❌ [CONFIGURATION ERROR]:', err.message);
+  process.exit(1);
+}
+
+console.log(`[✓] Authoritative Runtime Mode: ${runInLocalhostMode ? 'LOCALHOST' : 'PRODUCTION'}`);
+console.log(`[✓] Cloudflare Domain: ${runtimeUrls.domain}`);
+console.log(`[✓] Deployment Prefix: ${runtimeUrls.prefix}\n`);
+
+// Safe Cloudflare Tunnel execution
 let tunnelProcess = null;
 const tunnelCmd = process.env.CLOUDFLARE_TUNNEL_COMMAND || branding.cloudflareTunnelCommand;
 
@@ -84,17 +86,6 @@ if (tunnelCmd && tunnelCmd.trim()) {
   await new Promise(r => setTimeout(r, 1500));
 }
 
-// Check for user-configured Cloudflare Tunnel command
-let tunnelProcess = null;
-const tunnelCmd = process.env.CLOUDFLARE_TUNNEL_COMMAND || branding.cloudflareTunnelCommand;
-
-if (tunnelCmd && tunnelCmd.trim()) {
-  console.log(`[☁️ Cloudflare Tunnel] Executing tunnel command before starting services:`);
-  tunnelProcess = startCloudflaredSafely(tunnelCmd, { stdio: 'inherit' });
-  if (tunnelProcess) console.log(`[✓] Cloudflare Tunnel process launched (PID: ${tunnelProcess.pid}).\n`);
-  await new Promise(r => setTimeout(r, 1500));
-}
-
 // 3. Launch Process Supervisor and Production Services
 console.log('[2/3] Launching Local Process Supervisor on port 8090...');
 const cc = await startControlCenter(8090);
@@ -103,31 +94,18 @@ console.log('[3/3] Starting core production gateway services (Pure API & Android
 await cc.processManager.startAll();
 
 console.log('====================================================');
-console.log(runInLocalhostMode
-  ? '🟢 YOUPI PG V2 GATEWAY ONLINE & ACTIVE (localhost mode)'
-  : '🟢 YOUPI PG V2 PRODUCTION GATEWAY ONLINE & ACTIVE');
+console.log('🟢 YOUPI PG V2 PRODUCTION GATEWAY ONLINE & ACTIVE');
 console.log('====================================================');
-console.log(runInLocalhostMode ? 'LOCAL SERVICE ROUTES:' : 'AUTHORITATIVE PUBLIC CLOUDFLARE ROUTES:');
 console.log(`• Checkout Portal:      ${runtimeUrls.checkoutUrl}  (-> :7000)`);
 console.log(`• Payment Core API:     ${runtimeUrls.apiUrl}  (-> :6100)`);
 console.log(`• Merchant Admin Hub:   ${runtimeUrls.adminUrl}  (-> :6001)`);
 console.log(`• Gmail OAuth/Observer: ${runtimeUrls.gmailUrl}  (-> :6003)`);
-console.log(`• Demo Store (Opt):     ${runtimeUrls.storeUrl}  (-> :5000)`);
-console.log('----------------------------------------------------');
-console.log('OBSERVATION CHANNELS:');
-console.log('• Android SMS Observer: Native APK -> Public Payment API');
-console.log('• Gmail API Observer:   OAuth2 API -> Public Payment API');
-console.log(runInLocalhostMode
-  ? '• Legacy Chrome CDP:    ENABLED in localhost mode'
-  : '• Legacy Chrome CDP:    DISABLED in production');
 console.log('====================================================');
-console.log('Press Ctrl+C to stop all services gracefully.');
 
 const shutdown = async () => {
   console.log('\nStopping all services gracefully...');
   if (tunnelProcess && tunnelProcess.pid) {
     try {
-      console.log('Terminating Cloudflare Tunnel process...');
       if (process.platform === 'win32') {
         spawn('taskkill', ['/pid', String(tunnelProcess.pid), '/f', '/t']);
       } else {
