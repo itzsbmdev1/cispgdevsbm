@@ -68,6 +68,10 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
            /usr/local/bin/corepack \
            /opt/yarn*
 
+# Install Cloudflare Tunnel (cloudflared) before switching to unprivileged user
+RUN wget -qO /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && \
+    chmod +x /usr/local/bin/cloudflared
+
 # Create unprivileged application user
 RUN addgroup -S -g 1001 youpi && \
     adduser -S -u 1001 -G youpi youpi
