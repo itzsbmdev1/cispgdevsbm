@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto'; // 🔥 Added for Merchant Key Generation
 import { getDatabase, MerchantRepository, SupportTicketRepository } from '@youpi/db';
 import { getAdminToken, safeEqual } from '@youpi/common';
 
@@ -22,10 +23,6 @@ function hasAdminToken(req, url = null, pathname = '') {
   if (match) {
     return safeEqual(match[1].trim(), getAdminToken());
   }
-  // NOTE: the stream token is deliberately NOT accepted from a query parameter. A
-  // credential in the URL ends up in access logs, browser history and Referer headers.
-  // The dashboards now open the stream with fetch() so the token travels in the
-  // Authorization header only.
   return false;
 }
 
@@ -75,8 +72,6 @@ export class AdminServer {
     } catch {}
 
     let html = this.template;
-    // Always use empty string '' so client fetch calls hit the merchant admin's own /api proxy!
-    // This completely eliminates CORS errors, tunnel downtime 530s, and cross-origin failures.
     const clientApiBase = '';
     html = html.replaceAll('{{API_BASE_URL}}', clientApiBase);
     return html;
@@ -104,6 +99,64 @@ export class AdminServer {
         return;
       }
 
+      // 🔥 NAYA ROUTE: Create Merchant API & Auto-Generate Keys
+      if (pathname === '/api/admin/create-merchant' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const data = new URLSearchParams(body);
+            const business_name = data.get('business_name') || 'New Merchant';
+            const contact_email = data.get('contact_email') || 'admin@domain.com';
+            const contact_phone = data.get('contact_phone') || '9999999999';
+            const webhook_url = data.get('webhook_url') || '';
+
+            const merchantId = crypto.randomUUID();
+            const webhookSecret = crypto.randomBytes(32).toString('hex');
+            const slug = business_name.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
+            const branding = JSON.stringify({ primaryColor: "#2563eb", appName: business_name, logoUrl: null });
+
+            const sqlBase = `INSERT INTO merchants (id, business_name, slug, contact_email, contact_phone, webhook_url, webhook_secret, branding) VALUES `;
+            const params = [merchantId, business_name, slug, contact_email, contact_phone, webhook_url, webhookSecret, branding];
+
+            // Universal DB Engine Support (SQLite, Postgres, etc.)
+            if (typeof this.db.query === 'function') {
+                try {
+                    await this.db.query(sqlBase + `($1, $2, $3, $4, $5, $6, $7, $8)`, params);
+                } catch(err) {
+                    await this.db.query(sqlBase + `(?, ?, ?, ?, ?, ?, ?, ?)`, params);
+                }
+            } else if (typeof this.db.run === 'function') {
+                await this.db.run(sqlBase + `(?, ?, ?, ?, ?, ?, ?, ?)`, params);
+            } else if (typeof this.db.execute === 'function') {
+                await this.db.execute(sqlBase + `(?, ?, ?, ?, ?, ?, ?, ?)`, params);
+            } else {
+                this.merchantRepo.create({ id: merchantId, business_name, slug, contact_email, contact_phone, webhook_url, webhook_secret: webhookSecret });
+            }
+
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`
+              <div style="font-family: sans-serif; padding: 40px; max-width: 600px; margin: 40px auto; border: 1px solid #cbd5e1; border-radius: 12px; background: #f8fafc; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+                <h2 style="color: #059669; margin-top: 0;">✅ Merchant Created Successfully!</h2>
+                <p><b>Business Name:</b> ${escapeHtml(business_name)}</p>
+                <div style="background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin: 20px 0;">
+                  <p style="margin-top:0;"><b>Merchant ID:</b> <br><code style="color: #0284c7; font-size: 16px; word-break: break-all;">${merchantId}</code></p>
+                  <p style="margin-bottom:0;"><b>Webhook Secret (API Key):</b> <br><code style="color: #0284c7; font-size: 16px; word-break: break-all;">${webhookSecret}</code></p>
+                </div>
+                <p style="color: #64748b; font-size: 14px;"><i>Copy these credentials and paste them into your CodeIgniter (PHP) Backend settings!</i></p>
+                <br>
+                <a href="/admin" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">⬅ Go Back to Admin Dashboard</a>
+              </div>
+            `);
+          } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('Database Error: ' + error.message);
+          }
+        });
+        return;
+      }
+      // 🔥 ROUTE KHATAM
+
       // Admin Tickets API: GET /api/admin/tickets
       if (pathname === '/api/admin/tickets') {
         if (!hasAdminToken(req)) {
@@ -125,8 +178,6 @@ export class AdminServer {
       }
 
       // Merged Control Center Supervisor Proxy: /api/services/* and /api/logs/stream -> Control Center on port 8090
-      // Relaying this unauthenticated would republish process control and every service's
-      // stdout/stderr on the internet-facing admin host, so the admin token is required.
       if (pathname.startsWith('/api/services') || pathname === '/api/logs/stream') {
         if (!hasAdminToken(req, url, pathname)) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -221,7 +272,7 @@ export class AdminServer {
         }
       }
 
-      // Self-hosted UI fonts (CSP blocks third-party font CDNs)
+      // Self-hosted UI fonts
       const fontMatch = /^\/fonts\/(dm-sans|sora)\.woff2$/.exec(pathname);
       if (fontMatch && req.method === 'GET') {
         const fontPath = path.resolve(__dirname, '../public/fonts', `${fontMatch[1]}.woff2`);
@@ -252,4 +303,14 @@ export class AdminServer {
       res.end('Admin Route Not Found');
     });
   }
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }

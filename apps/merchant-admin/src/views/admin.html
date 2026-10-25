@@ -1271,6 +1271,38 @@
     <!-- ========================================================================= -->
     <div id="sectionOperations">
 
+      <!-- NAYA MERCHANT BANANE KA FORM (Auto-Generate Keys) -->
+      <div style="background: var(--bg-card); padding: 1.4rem; margin-bottom: 1.5rem; border-radius: var(--r-surf); border: 1px solid var(--border); box-shadow: var(--card-shadow);">
+          <div style="display: flex; align-items: center; gap: 0.55rem; margin-bottom: 1.15rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-subtle);">
+              <span style="font-size: 1.35rem;">➕</span>
+              <h3 style="margin: 0; font-family: var(--font-display); font-size: 1.02rem; font-weight: 700; color: var(--text-heading);">Add New Merchant (Auto-Generate Keys)</h3>
+          </div>
+          
+          <form action="/api/admin/create-merchant" method="POST" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; align-items: end;">
+              <div>
+                  <label style="font-weight: 700; font-size: 0.82rem; color: var(--text-muted); display: block; margin-bottom: 0.35rem;">Business Name:</label>
+                  <input type="text" name="business_name" required placeholder="e.g. Balaji Games" style="width: 100%;">
+              </div>
+              <div>
+                  <label style="font-weight: 700; font-size: 0.82rem; color: var(--text-muted); display: block; margin-bottom: 0.35rem;">Contact Email:</label>
+                  <input type="email" name="contact_email" required placeholder="support@domain.com" style="width: 100%;">
+              </div>
+              <div>
+                  <label style="font-weight: 700; font-size: 0.82rem; color: var(--text-muted); display: block; margin-bottom: 0.35rem;">Contact Phone:</label>
+                  <input type="text" name="contact_phone" required placeholder="9999999999" style="width: 100%;">
+              </div>
+              <div>
+                  <label style="font-weight: 700; font-size: 0.82rem; color: var(--text-muted); display: block; margin-bottom: 0.35rem;">Webhook URL (App Backend):</label>
+                  <input type="url" name="webhook_url" value="https://aapka-codeigniter-domain.com/webhook" required style="width: 100%;">
+              </div>
+              <div>
+                  <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.6rem; justify-content: center;">
+                      Generate & Save Merchant
+                  </button>
+              </div>
+          </form>
+      </div>
+      <!-- FORM KHATAM -->
       <!-- KPI Summary Cards -->
       <div class="kpi-row">
         <div class="kpi-box">
