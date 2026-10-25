@@ -37,25 +37,27 @@ export class Database {
       this.db = new DatabaseSync(':memory:');
     } else {
       let dbPath;
+      const defaultProdPath = '/app/data/database.sqlite';
+
       if (options.dbPath) {
         dbPath = path.isAbsolute(options.dbPath)
           ? options.dbPath
           : path.resolve(process.cwd(), options.dbPath);
-      } else if (process.env.SQLITE_DB_PATH) {
-        dbPath = path.isAbsolute(process.env.SQLITE_DB_PATH)
-          ? process.env.SQLITE_DB_PATH
-          : path.resolve(repoRoot, process.env.SQLITE_DB_PATH);
+      } else if (process.env.DATABASE_PATH || process.env.SQLITE_DB_PATH) {
+        const envPath = process.env.DATABASE_PATH || process.env.SQLITE_DB_PATH;
+        dbPath = path.isAbsolute(envPath) ? envPath : path.resolve(repoRoot, envPath);
       } else {
-        dbPath = path.resolve(repoRoot, 'data/youpi_pg.sqlite');
+        // Render production container ke liye absolute path, local ke liye repoRoot fallback
+        dbPath = fs.existsSync('/app/data') ? defaultProdPath : path.resolve(repoRoot, 'data/youpi_pg.sqlite');
       }
+
       const dir = path.dirname(dbPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
       this.db = new DatabaseSync(dbPath);
-      // The file holds webhook secrets, session-token indexes, OTPs and customer PII.
-      // Default file creation honours umask, which on many hosts leaves it group/world
-      // readable, so restrict it explicitly.
+      
+      // Restrict file permissions for security
       try { fs.chmodSync(dbPath, 0o600); } catch {}
       try { fs.chmodSync(dir, 0o700); } catch {}
     }
@@ -139,9 +141,6 @@ export class Database {
    * @returns {T}
    */
   transaction(callback) {
-    // IMMEDIATE (not DEFERRED) so the write lock is taken up front. A deferred transaction
-    // starts as a read transaction and only upgrades on first write, which lets two
-    // concurrent slot-acquisition callers both observe a free slot before either writes.
     this.db.exec('BEGIN IMMEDIATE;');
     try {
       const result = callback();
@@ -150,9 +149,7 @@ export class Database {
     } catch (err) {
       try {
         this.db.exec('ROLLBACK;');
-      } catch {
-        // Ignore rollback error if already rolled back
-      }
+      } catch {}
       throw err;
     }
   }
